@@ -1,0 +1,71 @@
+# GEN gateway: the only thing on the droplet that listens on a public port.
+# It finds the other projects' containers by name on the shared docker network "gen-gateway":
+#   gen-api:8000   FastAPI            (gen-backend/backend)
+#   gen-web:3000   the website        (garuda-empowerment-network)
+#   gen-cms:1337   Strapi, optional   (gen-cms)
+#
+# SITE_ADDRESS  every address the gateway answers on, comma separated.
+#     ":80"                                   plain HTTP on the droplet's IP (the default)
+#     "gen.example.com, api.gen.example.com"  Caddy fetches and renews HTTPS certificates itself
+#
+# API_HOSTS     which of those hostnames are API-only (space separated). On them every path
+#               goes to the API; on the others the website is served and the API is under /api.
+#
+# CMS_HOST      the hostname (also listed in SITE_ADDRESS) that serves the Strapi CMS.
+
+(api) {
+	# /cms/* is where the CMS pushes published content. It does that inside the docker
+	# network; from outside the route does not exist.
+	@cms_sync path /cms /cms/*
+	respond @cms_sync 404
+
+	request_body {
+		max_size 2MB
+	}
+	reverse_proxy gen-api:8000
+}
+
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# The CMS admin panel and its own content API (also under /api), on its own hostname.
+	@cms_host host {$CMS_HOST:cms.invalid}
+	handle @cms_host {
+		request_body {
+			max_size 25MB
+		}
+		reverse_proxy gen-cms:1337
+	}
+
+	handle {
+		# /api/... -> FastAPI. The prefix is stripped here; the API knows about it
+		# through ROOT_PATH=/api.
+		handle_path /api/* {
+			import api
+		}
+
+		# API-only hostnames: the same API without the /api prefix.
+		@api_host host {$API_HOSTS:api.invalid}
+		handle @api_host {
+			import api
+		}
+
+		# Everything else is the website.
+		handle {
+			reverse_proxy gen-web:3000
+		}
+	}
+}
+
+# Other projects on this droplet (the bot, ...) get their own block here: join their
+# container to the "gen-gateway" network and add
+#
+#   bot.example.com {
+#       reverse_proxy bot:8080
+#   }
