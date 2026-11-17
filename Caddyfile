@@ -13,6 +13,15 @@
 #
 # CMS_HOST      the hostname (also listed in SITE_ADDRESS) that serves the Strapi CMS.
 
+{
+	# When another proxy on the same machine sits in front (a host Caddy that already owns
+	# 80/443 and forwards here), keep its X-Forwarded-* headers: the CMS needs to know the
+	# visitor came in over HTTPS. Only private addresses are trusted, never the internet.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
 (api) {
 	# /cms/* is where the CMS pushes published content. It does that inside the docker
 	# network; from outside the route does not exist.
